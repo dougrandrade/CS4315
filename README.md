@@ -16,9 +16,8 @@ There are nine assignments and one project:
 - Final Project - Salary prediction using K-Nearest Neighbors Regression 
 
 -------------------------------------------------------------------------------
-  
-Steps for committing Jupyter Notebook .ipynb files to the GitHub repository:
-Initial Set-up:
+## Steps for committing Jupyter Notebook .ipynb files to the GitHub repository:
+### Initial Set-up:
 1. Create a repo on GitHub
 2. Install Git (if not already done) - https://git-scm.com/downloads
 3. Clone repo by copying repo link - click on the "<> Code" button and copy the HTTPS URL
