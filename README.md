@@ -1,6 +1,6 @@
 # CS4315
-## Introduction to Machine Learning and Data Mining
-### Naval Postgraduate School, Data Science Certificate
+## Introduction to Machine Learning and Data Mining\n
+Naval Postgraduate School, Data Science Certificate
 
 This repository contains a series of Jupyter Notebook assignments, and their associated databases and output files.
 There are nine assignments and one project:
