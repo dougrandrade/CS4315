@@ -21,21 +21,20 @@ There are nine assignments and one project:
 1. Create a repo on GitHub
 2. Install Git (if not already done) - https://git-scm.com/downloads
 3. Clone repo by copying repo link - click on the "<> Code" button and copy the HTTPS URL
-4. In Powershell, navigate the directory you want to clone the repo:
-PS C:\Users\dougr>
-	cd ~\Data_Science_Projects\NPS
+4. In Powershell, navigate to the directory you want to clone the repo
+	PS C:\Users\dougr> cd ~\Data_Science_Projects\NPS
 6. Clone the directory:
-	  PS C:\Users\dougr\Data_Science_Projects\NPS> git clone https://github.com/dougrandrade/NPS_DS_Repo.git
+	PS C:\Users\dougr\Data_Science_Projects\NPS> git clone https://github.com/dougrandrade/NPS_DS_Repo.git
 7. Save your Jupyter Notebook to the directory where the repo is cloned:
-	  C:\Users\dougr> cd ~\Data_Science_Projects\NPS\NPS_DS_Repo
+	C:\Users\dougr> cd ~\Data_Science_Projects\NPS\NPS_DS_Repo
 
 Committing and Pushing Changes to the GitHub repo:
 1. Open Powershell
 2. Navigate to the repo directory: 
-	  PS C:\Users\dougr> cd ~\Data_Science_Projects\NPS\NPS_DS_Repo
+	PS C:\Users\dougr> cd ~\Data_Science_Projects\NPS\NPS_DS_Repo
 3. Add changes to the staging area:
-	  PS C:\Users\dougr\Data_Science_Projects\NPS\NPS_DS_Repo> git add .
+	PS C:\Users\dougr\Data_Science_Projects\NPS\NPS_DS_Repo> git add .
 4. Commit changes:
-	  PS C:\Users\dougr\Data_Science_Projects\NPS\NPS_DS_Repo> git commit -m "Add Jupyter Notebook"
+	PS C:\Users\dougr\Data_Science_Projects\NPS\NPS_DS_Repo> git commit -m "Add Jupyter Notebook"
 5. Push the changes to the repo on GitHub:
-	  PS C:\Users\dougr\Data_Science_Projects\NPS\NPS_DS_Repo> git push
+	PS C:\Users\dougr\Data_Science_Projects\NPS\NPS_DS_Repo> git push
