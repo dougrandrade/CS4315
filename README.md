@@ -22,7 +22,7 @@ There are nine assignments and one project:
 2. Install Git (if not already done) - https://git-scm.com/downloads
 3. Clone repo by copying repo link - click on the "<> Code" button and copy the HTTPS URL
 4. In Powershell, navigate to the directory you want to clone the repo
-	PS C:\Users\dougr> cd ~\Data_Science_Projects\NPS
+	`PS C:\Users\dougr>` `cd ~\Data_Science_Projects\NPS`
 6. Clone the directory:
 	PS C:\Users\dougr\Data_Science_Projects\NPS> git clone https://github.com/dougrandrade/NPS_DS_Repo.git
 7. Save your Jupyter Notebook to the directory where the repo is cloned:
