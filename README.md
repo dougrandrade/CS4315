@@ -1,7 +1,6 @@
 # Naval Postgraduate School, Data Science Certificate 2024
-### Course Projects in Python and R
 -------------------------------------------------------------------------------
-
+## Course Projects in Python and R
 This repository contains a collection of course projects in Python and R, and their associated databases and output files.
 
 - CS 4315 Introduction to Machine Learning
