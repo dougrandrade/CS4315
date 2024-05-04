@@ -1,19 +1,12 @@
-# CS4315
-## Introduction to Machine Learning and Data Mining
-Naval Postgraduate School, Data Science Certificate
+# Naval Postgraduate School, Data Science Certificate
+## Course Projects in Python and R
+
 
 This repository contains a series of Jupyter Notebook assignments, and their associated databases and output files.
 There are nine assignments and one project:
-- Lab 1 - Basic Python string, tuple, lists, and dictionary operations
-- Lab 2 - Python functions, importing and creating text and .csv files, and text parsing
-- Lab 3 - Numpy and Matplotlib operations
-- Lab 4 - Pandas operations
-- Lab 5 - Basic statistics operations
-- Lab 6 - Text vectorization and graphical distance algorithms
-- Lab 7 - K-Nearest Neighbors and imbalanced data handling
-- Lab 8 - Dimensionality reduction, cluster modeling, and Gaussian mixture modeling
-- Lab 9 - Naive Bayes modeling
-- Final Project - Salary prediction using K-Nearest Neighbors Regression 
+- CS 4315 Introduction to Machine Learning
+	- Data Science Salary Analysis and Prediction Using KNN Regression
+- CS 4106 Advanced Data Analysis
 
 -------------------------------------------------------------------------------
 ## Steps for committing Jupyter Notebook .ipynb files to the GitHub repository:
