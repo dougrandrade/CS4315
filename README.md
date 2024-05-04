@@ -1,5 +1,5 @@
 # Naval Postgraduate School, Data Science Certificate
-## Course Projects in Python and R
+### Course Projects in Python and R
 
 
 This repository contains a collection of course projects in Python and R, and their associated databases and output files.
