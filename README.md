@@ -2,11 +2,13 @@
 ## Course Projects in Python and R
 
 
-This repository contains a series of Jupyter Notebook assignments, and their associated databases and output files.
-There are nine assignments and one project:
+This repository contains a collection of course projects in Python and R, and their associated databases and output files.
+
 - CS 4315 Introduction to Machine Learning
-	- Data Science Salary Analysis and Prediction Using KNN Regression
+	- Data Science Salary Analysis and Prediction Using KNN Regression (Python with Jupyter Notebook)
 - CS 4106 Advanced Data Analysis
+	- Stucco Strength Analysis and Prediction (RStudio with RMarkdown)
+	- Cell Phone Plan Cancellations Analysis and Prediction (RStudtio with RMarkdown)
 
 -------------------------------------------------------------------------------
 ## Steps for committing Jupyter Notebook .ipynb files to the GitHub repository:
