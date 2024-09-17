@@ -5,7 +5,7 @@
 - CS 4315 Introduction to Machine Learning
 	- Data Science Salary Analysis and Prediction Using KNN Regression (Jupyter Notebook)
 - CS 4106 Advanced Data Analysis
-	- Cell Phone Plan Cancellations Analysis and Prediction (RMarkdown pdf)
+	- Cell Phone Plan Cancellations Analysis and Prediction (RMarkdown code and pdf)
 
 
 -------------------------------------------------------------------------------
