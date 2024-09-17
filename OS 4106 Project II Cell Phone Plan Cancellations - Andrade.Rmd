@@ -1,0 +1,1299 @@
+---
+title: 'OS 4016 Project II: Cell Phone Plan Cancellations'
+author: "Doug Andrade"
+geometry: margin=1.5cm
+output: pdf_document
+---
+
+```{r Modules, include = FALSE}
+options(java.parameters = "-Xmx8000m")
+
+library(kableExtra)
+library(rstudioapi)
+library(MASS)
+library(DescTools) # For dummy/one-hot encoding
+library(dplyr)
+library(tidyr)
+library(lares) # For correlation analysis
+library(ROSE) # for resampling
+library(vcd) # For Mosaic categorical analysis
+library(bestNormalize) # For transformation evaluation and analysis
+library(caret) # For machine learning modeling
+library(MLmetrics) # For loglos metrics
+library(gbm) # GBM prediction metric
+library(glmnet) # Elastic Net prediction metrics
+library(xgboost) # XGB prediction metrics
+library(ggplot2) # plotting
+library(ROSE) # for resampling
+library(vcd) # For Mosaic categorical analysis
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Load_Files, include = FALSE}
+# Set working directory
+setwd(dirname(rstudioapi::getSourceEditorContext()$path))
+
+#getwd()
+
+# Call in helper functions
+func.dir = './helper_functions'
+func.file <- 'validation_functions.R'
+full.file.name <- file.path(func.dir, 
+                            func.file)
+source(full.file.name)
+class.file = "classification_metrics.R"
+full.file.name <- file.path(func.dir, 
+                            class.file)
+source(full.file.name)
+
+# Load training data
+data.dir = '..\\data\\'
+data.file = 'cell_plan_cancellations.csv'
+cell.raw <- as.data.frame(read.csv(paste(data.dir, data.file, sep = ''), 
+                         stringsAsFactors = TRUE))
+
+# Load test data
+data.dir = '..\\data\\'
+data.file = 'cell_plan_cancellations_test.csv'
+cell_test.raw <- as.data.frame(read.csv(paste(data.dir, data.file, sep = ''),
+                                        stringsAsFactors = TRUE))
+
+# Convert training data to numeric safely
+cell.raw <- as.data.frame(lapply(cell.raw, function(x) {
+  if (all(is.na(as.numeric(as.character(x))))) {
+    return(x)  # Return original if conversion is not possible
+  } else {
+    return(as.numeric(as.character(x)))  # Convert to numeric
+  }
+}))
+
+# Convert test data to numeric safely
+cell_test.raw <- as.data.frame(lapply(cell_test.raw, function(x) {
+  if (all(is.na(as.numeric(as.character(x))))) {
+    return(x)  # Return original if conversion is not possible
+  } else {
+    return(as.numeric(as.character(x)))  # Convert to numeric
+  }
+}))
+
+```
+
+```{r Exploration, include = FALSE}
+
+# setting seed to generate a  reproducible random sampling 
+set.seed(182)
+
+# Function to visualize numeric data distribution
+hist_preview <- function(data) {
+  
+  # calculate total of numeric variables
+  numeric_cols <- sapply(data, is.numeric)
+  numeric_data <- data[, numeric_cols]
+  
+  # Determine the number of numeric columns
+  n <- sum(numeric_cols)
+  
+  # graph the numeric variables
+  rows <- ceiling(sqrt(n))
+  cols <- ceiling(n / rows)
+  
+  par(mfrow = c(rows, cols),
+      mar = c(5, 3, 2, 2) + 0.1)
+  
+  for (i in 1:ncol(numeric_data)) {
+    hist(numeric_data[, i], 
+         main = NULL, 
+         xlab = colnames(numeric_data)[i], 
+         col = '#09ADAD', 
+         breaks = "Scott")
+    }
+  
+  par(mfrow = c(1, 1))
+}
+
+# Function to visualize numeric data interquartile range and outliers
+boxplot_preview <- function(data) {
+ 
+  # calculate total of numeric variables
+  numeric_cols <- sapply(data, is.numeric)
+  numeric_data <- data[, numeric_cols]
+  
+  # Determine the number of numeric columns
+  n <- sum(numeric_cols)
+  
+  # graph the numeric variables
+  rows <- ceiling(sqrt(n))
+  cols <- ceiling(n / rows)
+  
+  par(mfrow = c(rows, cols),
+      mar = c(5, 3, 2, 2) + 0.1)
+  
+  for (i in 1:ncol(data)) {
+    if (is.numeric(data[, i])) {
+      boxplot(data[, i], 
+              main = NULL, 
+              xlab = colnames(data[i]), 
+              col = '#09ADAD', 
+              horizontal = TRUE)
+    }
+  }
+  par(mfrow = c(1, 1))
+}
+
+# Function to visualize categorical data distribution
+CategoricalPlot_preview <- function(data) {
+  
+  # calculate total of numeric variables
+  factor_cols <- sapply(data, is.factor)
+  factor_data <- data[, factor_cols]
+  
+  # Determine the number of numeric columns
+  n <- sum(factor_cols)
+  
+  # graph the numeric variables
+  rows <- ceiling(sqrt(n))
+  cols <- ceiling(n / rows)
+  
+  par(mfrow = c(rows, cols),
+      mar = c(5, 3, 2, 2) + 0.1)
+  
+  for (i in 1:ncol(data)) {
+    if (is.factor(data[,i])) {
+      plot(data[, i], 
+           main = NULL, 
+           xlab = colnames(data[i]), 
+           col = '#09ADAD', 
+           horizontal = TRUE)
+    }
+  }
+  par(mfrow = c(1, 1))
+}
+
+# Build a statistical summary function
+StatSum <- function(data, lb = 0.01, ub = .99) {
+  stats <- data.frame()
+  for (i in colnames(data)) {
+    if (is.numeric(data[[i]])) {
+      stats[i, 'Mean'] <- round(mean(data[[i]], na.rm = TRUE), 4)
+      stats[i, 'Median'] <- round(median(data[[i]], na.rm = TRUE), 4)
+      stats[i, 'StDev'] <- round(sd(data[[i]], na.rm = TRUE), 4)
+      stats[i, 'Min'] <- round(min(data[[i]], na.rm = TRUE), 4)
+      stats[i, 'Max'] <- round(max(data[[i]], na.rm = TRUE), 4)
+      stats[i, 'Skew'] <- ifelse(stats[i, 'Mean'] - 10 > stats[i, 'Median'] | stats[i, 'Mean'] + 10 < stats[i, 'Median'], 1, 0)
+      stats[i, 'LowerBound'] <- round(quantile(data[[i]], lb, na.rm = TRUE), 4)
+      stats[i, 'UpperBound'] <- round(quantile(data[[i]], ub, na.rm = TRUE), 4)
+      stats[i, 'Perc.LB'] <- round(mean(data[[i]] < stats[i, 'LowerBound'], na.rm = TRUE), 4)
+      stats[i, 'Perc.UB'] <- round(mean(data[[i]] > stats[i, 'UpperBound'], na.rm = TRUE), 4)
+      stats[i, 'Perc.InBound'] <- round(mean(data[[i]] >= stats[i, 'LowerBound'] & data[[i]] <= stats[i, 'UpperBound'], na.rm = TRUE), 4)
+      stats[i, 'Total.NA'] <- sum(is.na(data[[i]]))
+      stats[i, 'Ratio.NA'] <- round(mean(is.na(data[[i]])), 4)
+    }
+  }
+  return(stats)
+}
+
+# Print the statistics summary table
+raw_stats <- StatSum(cell.raw)
+#raw_stats
+
+# Plot the visuals
+#CategoricalPlot_preview(cell.raw)
+#boxplot_preview(cell.raw)
+#hist_preview(cell.raw)
+#hist_preview(cell_test.raw)
+
+# Function to visualize normalized numeric data distribution
+best_norm_preview <- function(data) {
+ 
+  # calculate total of numeric variables
+  numeric_cols <- sapply(data, is.numeric)
+  numeric_data <- data[, numeric_cols]
+  
+  # Determine the number of numeric columns
+  n <- sum(numeric_cols)
+  
+  # graph the numeric variables
+  rows <- ceiling(sqrt(n))
+  cols <- ceiling(n / rows)
+  
+  par(mfrow = c(rows, cols), 
+      mar = c(5, 3, 2, 2) + 0.1)
+  
+  for (i in 1:ncol(data)) {
+    if (is.numeric(data[, i])) {
+      bn <- bestNormalize(data[, i])
+      hist(bn$x.t, 
+           main = paste("Best Transformation:", class(bn$chosen_transform)[1]),
+           xlab = colnames(data[i]),
+           breaks = "Scott")
+    }
+  }
+  par(mfrow = c(1, 1))
+}
+
+```
+
+```{r Correlation, include = FALSE}
+
+# Look at numeric data correlation
+numeric_cols <- names(cell.raw)[sapply(cell.raw, is.numeric)]
+numericClass <- subset(cell.raw, select = c(numeric_cols), na.rm = TRUE)
+
+set.seed(182)
+
+# Compute correlation matrix
+cC <- cor(x = numericClass,
+          use = 'complete.obs')
+
+# Plot the correlation matrix
+par(mfrow = c(1, 1))
+cor_plot <- corrplot::corrplot(corr = cC, 
+                               method = "square", 
+                               type = 'upper')
+
+# Build a correlogram plot using the 'ggstatsplot' package
+#ggstats_plot <- ggstatsplot::ggcorrmat(
+#  data = cell.raw,
+#  cor.vars = numeric_cols,
+#  type = "parametric", # parametric for Pearson, nonparametric for Spearman's correlation
+#  colors = c("darkred", "white", "steelblue")) # change default colors
+#ggstats_plot
+
+# Plot the top 15 correlations using the 'lares' package
+cor_cross_plot <- corr_cross(df = cell.raw, 
+                             rm.na = T, 
+                             max_pvalue = 0.05, 
+                             top = 15, 
+                             grid = T)
+
+```
+
+```{r Categorical_Analysis, include = FALSE}
+
+# Example for all categorical variables
+cat_vars <- c("Married", "PaymentMethod", "BasePlan", "IntlPlan", "Deal")
+for (var in cat_vars) {
+  cat("\nChi-Square Test for", var, "\n")
+  print(chisq.test(table(cell.raw[[var]], cell.raw$Cancel)))
+}
+# Significant categorical features - Deal, IntelPlan, BasePlan
+# Not significant categorical features - Married, PaymentMethod
+
+library(vcd) # For Mosaic categorical analysis
+# Example for all categorical variables
+for (var in cat_vars) {
+  mosaic_formula <- as.formula(paste("~", var, "+ Cancel"))
+  mosaic(mosaic_formula, data = cell.raw, shade = TRUE, legend = TRUE)
+}
+
+# Significant categorical features - Deal (no deal won't cancel), IntelPlan won't cancel, BasePlan economy will cancel
+# Not significant categorical features - Married, PaymentMethod
+
+```
+
+```{r Data_Split, include = FALSE}
+
+set.seed(182) # Ensure reproducibility
+
+# Split the data into training and validation sets
+train_ind <- createDataPartition(
+  y = cell.raw$Cancel,
+  p = .75,
+  list = FALSE)
+
+# Build training and validation data sets
+train <- cell.raw[train_ind, ]
+val   <- cell.raw[-train_ind, ]
+
+```
+
+```{r Transformation, include = FALSE}
+# Training Data Transformation
+train_norm <- train
+
+set.seed(182)
+train_norm$CustomerAge <- orderNorm(train_norm$CustomerAge)$x.t # good
+train_norm$HouseholdSize <- exp_x(train_norm$HouseholdSize)$x.t # same
+train_norm$LastNewPhone <- orderNorm(train_norm$LastNewPhone)$x.t # good
+train_norm$CustServCall <- sqrt_x(train_norm$CustServCall)$x.t # ok
+train_norm$NumVmail <- double_reverse_log(train_norm$NumVmail)$x.t # same
+train_norm$NumText <- center_scale(train_norm$NumText)$x.t # ok
+train_norm$NumApps <- orderNorm(train_norm$NumApps)$x.t # ok
+train_norm$IntlCall <- center_scale(train_norm$IntlCall)$x.t # same
+train_norm$DayData <- orderNorm(train_norm$DayData)$x.t # good
+train_norm$EveData <- orderNorm(train_norm$EveData)$x.t # good
+train_norm$NightData <- orderNorm(train_norm$NightData)$x.t # good
+
+# Validation Data Transformation
+val_norm <- val
+
+set.seed(182)
+val_norm$CustomerAge <- (orderNorm(val_norm$CustomerAge)$x.t) # good
+val_norm$HouseholdSize <- (exp_x(val_norm$HouseholdSize)$x.t) # same
+val_norm$LastNewPhone <- (orderNorm(val_norm$LastNewPhone)$x.t) # good
+val_norm$CustServCall <- (sqrt_x(val_norm$CustServCall)$x.t) # ok
+val_norm$NumVmail <- (double_reverse_log(val_norm$NumVmail)$x.t) # same
+val_norm$NumText <- (center_scale(val_norm$NumText)$x.t) # ok
+val_norm$NumApps <- (orderNorm(val_norm$NumApps)$x.t) # ok
+val_norm$IntlCall <- (center_scale(val_norm$IntlCall)$x.t) # same
+val_norm$DayData <- (orderNorm(val_norm$DayData)$x.t) # good
+val_norm$EveData <- (orderNorm(val_norm$EveData)$x.t) # good
+val_norm$NightData <- (orderNorm(val_norm$NightData)$x.t) # good
+
+# Test Data Transformation
+test_norm <- cell_test.raw
+
+set.seed(182)
+test_norm$CustomerAge <- orderNorm(test_norm$CustomerAge)$x.t # good
+test_norm$HouseholdSize <- exp_x(test_norm$HouseholdSize)$x.t # same
+test_norm$LastNewPhone <- orderNorm(test_norm$LastNewPhone)$x.t # good
+test_norm$CustServCall <- sqrt_x(test_norm$CustServCall)$x.t # ok
+test_norm$NumVmail <- double_reverse_log(test_norm$NumVmail)$x.t # same
+test_norm$NumText <- center_scale(test_norm$NumText)$x.t # ok
+test_norm$NumApps <- orderNorm(test_norm$NumApps)$x.t # ok
+test_norm$IntlCall <- center_scale(test_norm$IntlCall)$x.t # same
+test_norm$DayData <- orderNorm(test_norm$DayData)$x.t # good
+test_norm$EveData <- orderNorm(test_norm$EveData)$x.t # good
+test_norm$NightData <- orderNorm(test_norm$NightData)$x.t # good
+
+```
+
+```{r Resample, include = FALSE}
+
+# Check the class distribution before resampling
+raw_train_Cancel_tbl <- table(train_norm$Cancel)
+
+# Resample using the "over" method
+set.seed(182)
+
+train.norm_over <- ovun.sample(Cancel~., 
+                               data = train_norm,
+                               #N = nrow(train), 
+                               p = 0.5, 
+                               seed = 1, 
+                               method = "over")$data
+
+# Check the class distribution after resampling
+resamp_train_cancel_tbl <- table(train.norm_over$Cancel)
+
+```
+
+```{r One-Hot_Encode, include = FALSE}
+
+set.seed(182)
+dummy_tn <- dummyVars(" ~ .", data = train.norm_over[-29])
+train.over_hot <- data.frame(predict(dummy_tn, newdata = train.norm_over[-29]))
+train.over_hot <- cbind(train.over_hot, Cancel = train.norm_over$Cancel)
+
+set.seed(182)
+dummy_v <- dummyVars(" ~ .", data = val_norm[-29])
+val.norm_hot <- data.frame(predict(dummy_v, newdata = val_norm[-29]))
+val.norm_hot <- cbind(val.norm_hot, Cancel = val_norm$Cancel)
+
+set.seed(182)
+dummy_test <- dummyVars(" ~ .", data = test_norm)
+test.norm_hot <- data.frame(predict(dummy_test, newdata = test_norm))
+
+```
+
+```{r PCA, include = FALSE}
+
+train.over.num <- subset(train.norm_over, 
+                         select = -c(Married, 
+                                     PaymentMethod, 
+                                     BasePlan, 
+                                     IntlPlan, 
+                                     Deal))
+val_norm.num <- subset(val_norm, 
+                  select = -c(Married, 
+                              PaymentMethod, 
+                              BasePlan, 
+                              IntlPlan, 
+                              Deal))
+test_norm.num <- subset(test_norm,
+                   select = -c(Married, 
+                               PaymentMethod, 
+                               BasePlan, 
+                               IntlPlan, 
+                               Deal))
+# Training
+pc.train.over.x <- subset(train.over.num, select = -c(Cancel))
+
+set.seed(182)
+
+pc.over <- prcomp(pc.train.over.x, center = T, scale. = T)
+
+summary(pc.over)
+#plot(pc.over)
+#plot(pc.over$x[,'PC1'], pc.over$x[, 'PC2'])
+
+pc1 <- pc.over$x[, 1:1]
+
+train.pca <- data.frame(pc1, Cancel = train.over.num$Cancel)
+
+train.pca <- cbind(train.pca, 
+                BasePlan.deluxe = train.over_hot$BasePlan.deluxe, 
+                BasePlan.economy = train.over_hot$BasePlan.economy,
+                BasePlan.standard = train.over_hot$BasePlan.standard,
+                IntlPlan.No = train.over_hot$IntlPlan.No,
+                IntlPlan.Yes = train.over_hot$IntlPlan.Yes,
+                Deal.No = train.over_hot$Deal.No,
+                Deal.Yes = train.over_hot$Deal.Yes)
+
+# Validation
+pc.val.x <- subset(val_norm.num, select = -c(Cancel))
+
+set.seed(182)
+pc.val <- prcomp(pc.val.x, center = T, scale. = T)
+
+pc1.v <- pc.val$x[, 1:1]
+
+val.pca <- data.frame(pc1.v, Cancel = val_norm.num$Cancel)
+
+val.pca <- cbind(val.pca, 
+                BasePlan.deluxe = val.norm_hot$BasePlan.deluxe, 
+                BasePlan.economy = val.norm_hot$BasePlan.economy,
+                BasePlan.standard = val.norm_hot$BasePlan.standard,
+                IntlPlan.No = val.norm_hot$IntlPlan.No,
+                IntlPlan.Yes = val.norm_hot$IntlPlan.Yes,
+                Deal.No = val.norm_hot$Deal.No,
+                Deal.Yes = val.norm_hot$Deal.Yes)
+
+# Test
+pc.test.x <- test_norm.num
+
+set.seed(182)
+
+pc.test <- prcomp(pc.test.x, center = T, scale. = T)
+
+pc1.v <- pc.test$x[, 1:1]
+
+test.pca <- data.frame(pc1.v)
+
+test.pca <- cbind(test.pca, 
+                 BasePlan.deluxe = test.norm_hot$BasePlan.deluxe, 
+                 BasePlan.economy = test.norm_hot$BasePlan.economy,
+                 BasePlan.standard = test.norm_hot$BasePlan.standard,
+                 IntlPlan.No = test.norm_hot$IntlPlan.No,
+                 IntlPlan.Yes = test.norm_hot$IntlPlan.Yes,
+                 Deal.No = test.norm_hot$Deal.No,
+                 Deal.Yes = test.norm_hot$Deal.Yes)
+
+```
+
+```{r GLM_all, include = FALSE}
+
+#### 1. Logistic Regression, all predictors ####################################
+
+set.seed(182)
+num_folds = 5
+num_repeats = 3
+train.control <- trainControl(
+  method = 'repeatedcv',
+  number = num_folds,
+  repeats = num_repeats,
+  savePredictions = TRUE,
+  index = createMultiFolds(train.over_hot$Cancel, k = num_folds, times = num_repeats),
+  classProbs = TRUE,
+  summaryFunction = caret_classification_metrics,
+  returnResamp = 'all')
+
+glm.all <- train(Cancel ~ ., 
+                 data = train.over_hot,
+                 method = 'glm', 
+                 family = 'binomial',
+                 trControl = train.control,
+                 metric = 'log.loss', 
+                 maximize = FALSE)
+#glm.all$results
+
+#cat('GLM All Features:\nAcc: ', 
+#    round(glm.all$results$Accuracy, 5), ', logloss: ', 
+#    round(glm.all$results$log.loss, 5), '\n', sep = '')
+
+# Retrieve most significant features
+glm_imp <- varImp(glm.all)$importance
+glm_imp <- head(glm_imp[order(glm_imp$Overall, decreasing = TRUE), , drop = FALSE], 20)
+glm_imp <- c(rownames(glm_imp), 'Cancel')
+
+```
+
+```{r GLM_significant_features, include = FALSE}
+
+#### 2. Logistic Regression, only significant features #########################
+
+set.seed(182)
+num_folds = 5
+num_repeats = 3
+train.control <- trainControl(
+  method = 'repeatedcv',
+  number = num_folds,
+  repeats = num_repeats,
+  savePredictions = TRUE,
+  index = createMultiFolds(train.over_hot$Cancel, k = num_folds, times = num_repeats),
+  classProbs = TRUE,
+  summaryFunction = caret_classification_metrics,
+  returnResamp = 'all')
+
+#not normal data - NumVmail, NumText, CustServCall
+glm_r <- train(Cancel ~ ., 
+                 data = subset(train.over_hot, select = glm_imp),
+                 method = 'glm', 
+                 family = 'binomial',
+                 trControl = train.control,
+                 metric = 'log.loss', 
+                 maximize = FALSE)
+
+#cat('GLM Significant Features:\nAcc: ', 
+#    round(glm_r$results$Accuracy, 5), ', logloss: ', 
+#    round(glm_r$results$log.loss, 5), '\n', sep = '')
+
+```
+
+```{r GLM_interaction_significant_features, include = FALSE}
+
+#### 3. Logistic Regression, interactions & significant features ###############
+
+set.seed(182)
+num_folds = 5
+num_repeats = 3
+train.control <- trainControl(
+  method = 'repeatedcv',
+  number = num_folds,
+  repeats = num_repeats,
+  savePredictions = TRUE,
+  index = createMultiFolds(train.over_hot$Cancel, k = num_folds, times = num_repeats),
+  classProbs = TRUE,
+  summaryFunction = caret_classification_metrics,
+  returnResamp = 'all')
+
+# train interaction of significant features
+glm.int_r <- train(Cancel ~ . ^ 2, 
+                 data = subset(train.over_hot, select = glm_imp),
+                 method = 'glm', 
+                 family = 'binomial',
+                 trControl = train.control,
+                 metric = 'log.loss', 
+                 maximize = FALSE)
+#glm.int_r$results
+
+#cat('GLM with Interactions and Signiciant Features:\nAcc: ', 
+#    round(glm.int_r$results$Accuracy, 5), ', logloss: ', 
+#    round(glm.int_r$results$log.loss, 5), '\n', sep = '')
+
+```
+
+```{r GLM_PCA, include = FALSE}
+
+#### 4. Logistic Regression on PCA #############################################
+set.seed(182)
+num_folds = 5
+num_repeats = 3
+train.control <- trainControl(
+  method = 'repeatedcv',
+  number = num_folds,
+  repeats = num_repeats,
+  savePredictions = TRUE,
+  index = createMultiFolds(train.pca$Cancel, k = num_folds, times = num_repeats),
+  classProbs = TRUE,
+  summaryFunction = caret_classification_metrics,
+  returnResamp = 'all')
+
+glm.pca <- train(Cancel ~ ., 
+                 data = train.pca,
+                 method = 'glm', 
+                 family = 'binomial',
+                 trControl = train.control,
+                 metric = 'log.loss', 
+                 maximize = FALSE)
+#glm.pca$results
+
+#cat('GLM with PCA:\nAcc: ', 
+#    round(glm.pca$results$Accuracy, 5), ', logloss: ', 
+#    round(glm.pca$results$log.loss, 5), '\n', sep = '')
+
+```
+
+```{r Elastic_Net_All_and_sig_features, include = FALSE}
+
+#### 5. ElasticNet Model All predictors ########################################
+# normalized data did worse
+# Preprocessed data did worse
+set.seed(182)
+
+# Set the training controls
+num_folds   <- 5 
+num_repeats <- 3
+
+ela_train.control <- trainControl(
+  method = "repeatedcv", 
+  number = num_folds,
+  repeats = num_repeats,
+  savePredictions = TRUE,
+  returnResamp = "all",
+  classProbs = TRUE,
+  summaryFunction = caret_classification_metrics,
+  index = createMultiFolds(train.over_hot$Cancel, k = num_folds, times = num_repeats))
+
+# Create tuning grid
+ela_tuneGrid <- expand.grid(
+  alpha = 10 ^ seq(6, -3, length = 25),
+  lambda = seq(0, 1, length = 4))
+
+ela_all <- train(
+  Cancel ~ ., 
+  data = train.over_hot,
+  method = 'glmnet',
+  family = 'binomial',
+  #preProcess = c('center', 'scale'),
+  trControl = ela_train.control,
+  tuneGrid = ela_tuneGrid,
+  metric = 'log.loss',  
+  maximize = FALSE,
+  verbose = FALSE
+)
+
+#ela_all$results[which.min(ela_all$results$log.loss), ]
+
+#cat('Elastic Net on all features:\nAcc: ', 
+#    round(max(ela_all$results$Accuracy), 5), ', logloss: ', 
+#    round(min(ela_all$results$log.loss), 5), '\n', sep = '')
+
+# Retrieve elastic net significant features
+ela_imp <- varImp(ela_all)$importance
+ela_imp <- head(ela_imp[order(ela_imp$Overall, decreasing = TRUE), , drop = FALSE], 20)
+ela_imp <- c(rownames(ela_imp), 'Cancel')
+
+# Train on significant features
+ela_all_r <- train(
+  Cancel ~ ., 
+  data = subset(train.over_hot, select = ela_imp),
+  method = 'glmnet',
+  family = 'binomial',
+  #preProcess = c('center', 'scale'),
+  trControl = ela_train.control,
+  tuneGrid = ela_tuneGrid,
+  metric = 'log.loss',  
+  maximize = FALSE,
+  verbose = FALSE
+)
+
+#cat('Elastic Net with significant features:\nAcc: ', 
+#    round(max(ela_all_r$results$Accuracy), 5), ', logloss: ', 
+#    round(min(ela_all_r$results$log.loss), 5), '\n', sep = '')
+
+```
+
+```{r Elastic_Net_PCA, include = FALSE}
+
+#### 6. Elastic Net Model on PCA ###############################################
+
+set.seed(182)
+
+# Set the training controls
+num_folds   <- 5 
+num_repeats <- 3
+
+ela_train.control <- trainControl(
+  method = "repeatedcv", 
+  number = num_folds,
+  repeats = num_repeats,
+  savePredictions = TRUE,
+  returnResamp = "all",
+  classProbs = TRUE,
+  summaryFunction = caret_classification_metrics,
+  index = createMultiFolds(train.pca$Cancel, k = num_folds, times = num_repeats))
+
+# Create tuning grid
+ela_tuneGrid <- expand.grid(
+  alpha = 10 ^ seq(6, -3, length = 25),
+  lambda = seq(0, 1, length = 4))
+
+ela_pca <- train(
+  Cancel ~ ., 
+  data = train.pca,
+  method = 'glmnet',
+  family = 'binomial',
+  #preProcess = c('center', 'scale'),
+  trControl = ela_train.control,
+  tuneGrid = ela_tuneGrid,
+  metric = 'log.loss',  
+  maximize = FALSE,
+  verbose = FALSE
+)
+
+#ela_pca$results[which.min(ela_pca$results$log.loss),]
+
+#cat('Elastic Net w/PCA:\nAcc: ', 
+#    round(max(ela_pca$results$Accuracy), 5), ', logloss: ', 
+#    round(min(ela_pca$results$log.loss), 5), '\n', sep = '')
+
+```
+
+```{r Random_Forest_All_and_sig_features, include = FALSE}
+
+#### 7. Random Forest #############################################################
+set.seed(182)
+
+# Define the tuning grid for mtry(ncol - 1)
+RF_tuneGrid <- expand.grid(.mtry = 1:(ncol(train.over_hot) - 1))
+
+# Set the training controls
+num_folds   <- 5 
+num_repeats <- 3
+
+RF_train.control <- trainControl(
+  method = 'repeatedcv', 
+  number = num_folds,
+  repeats = num_repeats,
+  savePredictions = TRUE,
+  index = createMultiFolds(train.over_hot$Cancel, 
+                           k = num_folds, 
+                           times = num_repeats),
+  classProbs = TRUE,
+  summaryFunction = mnLogLoss,
+  returnResamp = 'all')
+
+# Fit the RF model on the transformed training data
+RF_cv <- train(
+  Cancel ~ ., 
+  data = train.over_hot,
+  method = 'rf',
+  trControl = RF_train.control,
+  ntree = 200,
+  metric = 'logLoss',
+  maximize = FALSE,
+  tuneGrid = RF_tuneGrid)
+
+# Review the model summary
+#RF_cv
+
+#cat('Random Forest with all features:\nAcc: ', 
+#    round(mean(RF_cv$pred$pred == RF_cv$pred$obs), 5), ', logloss: ', 
+#    round(min(RF_cv$results$logLoss), 5), '\n', sep = '')
+
+# Retreive significant features
+rf_imp <- varImp(RF_cv)$importance
+rf_imp <- head(rf_imp[order(rf_imp$Overall, decreasing = TRUE), , drop = FALSE], 20)
+rf_imp <- c(rownames(rf_imp), 'Cancel')
+
+# Fit the RF model on the significant features
+RF_cv_r <- train(
+  Cancel ~ ., 
+  data = subset(train.over_hot, select = rf_imp),
+  method = 'rf',
+  trControl = RF_train.control,
+  ntree = 200,
+  metric = 'logLoss',
+  maximize = FALSE,
+  tuneGrid = RF_tuneGrid)
+
+# Review the model summary
+#RF_cv
+
+#cat('Random Forest with significant features:\nAcc: ', 
+#    round(mean(RF_cv_r$pred$pred == RF_cv_r$pred$obs), 5), ', logloss: ', 
+#    round(min(RF_cv_r$results$logLoss), 5), '\n', sep = '')
+
+#slight decrease in acc (.004), slight improvement in logloss (.0002)
+
+```
+
+```{r GBM_All_and_sig_features, include = FALSE}
+
+#### 8. Gradient Boosting Machine (GBM) ###########################################
+
+set.seed(182)
+
+# Set the training controls
+num_folds = 5 
+num_repeats = 3
+
+GBM_train.control <- trainControl(
+  method = 'repeatedcv', 
+  number = num_folds,
+  repeats = num_repeats,
+  savePredictions = TRUE,
+  index = createMultiFolds(train.over_hot$Cancel, 
+                           k = num_folds, 
+                           times = num_repeats),
+  classProbs = TRUE,
+  summaryFunction = mnLogLoss,
+  returnResamp = 'all')
+
+# Define the tuning grid for GBM
+GBM_tuneGrid <- expand.grid(
+  n.trees = seq(100, 500, by = 100),
+  interaction.depth = seq(1, 5, by = 1),
+  shrinkage = c(0.01, 0.1),
+  n.minobsinnode = c(2, 8))
+
+GBM_cv <- train(
+  Cancel ~ ., 
+  data = train.over_hot,
+  method = 'gbm',
+  distribution = 'bernoulli',
+  trControl = GBM_train.control,
+  metric = 'logLoss',
+  maximize = FALSE,
+  tuneGrid = GBM_tuneGrid,
+  verbose = FALSE)
+
+# Review the GCM CV model summary
+#GBM_cv
+
+#cat('Gradient Boosting Machine with all features:\nAcc: ', 
+#    round(mean(GBM_cv$pred$pred == GBM_cv$pred$obs), 5), ', logloss: ', 
+#    round(min(GBM_cv$results$logLoss), 5), '\n', sep = '')
+
+# Retrieve significant features
+GBM_imp <- varImp(GBM_cv)$importance
+GBM_imp <- head(GBM_imp[order(GBM_imp$Overall, decreasing = TRUE), , drop = FALSE], 20)
+GBM_imp <- c(rownames(GBM_imp), 'Cancel')
+
+GBM_cv_r <- train(
+  Cancel ~ ., 
+  data = subset(train.over_hot, select = GBM_imp),
+  method = 'gbm',
+  distribution = 'bernoulli',
+  trControl = GBM_train.control,
+  metric = 'logLoss',
+  maximize = FALSE,
+  tuneGrid = GBM_tuneGrid,
+  verbose = FALSE)
+
+# Review the GCM CV model summary
+#GBM_cv
+
+#cat('Gradient Boosting Machine with significant features:\nAcc: ', 
+#    round(mean(GBM_cv_r$pred$pred == GBM_cv$pred$obs), 5), ', logloss: ', 
+#    round(min(GBM_cv_r$results$logLoss), 5), '\n', sep = '')
+
+# GBM barley improved with feature reduction
+
+```
+
+```{r XGB, include = FALSE}
+
+#### Extreme Gradient Boosting (XGBoost) #######################################
+
+set.seed(182)
+
+# Set the training controls
+num_folds = 5 
+num_repeats = 3
+
+XGB_train.control <- trainControl(
+  method = 'repeatedcv', 
+  number = num_folds,
+  repeats = num_repeats,
+  savePredictions = TRUE,
+  index = createMultiFolds(train.over_hot$Cancel, k = num_folds, times = num_repeats),
+  classProbs = TRUE,
+  summaryFunction = mnLogLoss,
+  returnResamp = 'all')
+
+# FIRST - Define the tuning grid for XGBoost
+XGB_tuneGrid_1 <- expand.grid(
+  nrounds = seq(from = 100, to = 1000, by = 50),  # Number of boosting rounds
+  max_depth = c(2, 3, 4, 5, 6),                   # Maximum depth of a tree
+  eta = c(0.025, 0.05, 0.1, 0.3),                 # Learning rate
+  gamma = c(0),                                   # Min loss reduction required to make a further partition on a leaf node of the tree
+  colsample_bytree = c(1.0),                      # Subsample ratio of columns when constructing each tree
+  min_child_weight = c(1),                        # Min sum of instance weight (hessian) needed in a child
+  subsample = c(1))                               # Subsample ratio of the training instance
+
+XGB_cv_1 <- train(
+  Cancel ~ ., 
+  data = train.over_hot,
+  method = 'xgbTree',
+  trControl = XGB_train.control,
+  metric = 'logLoss',
+  maximize = FALSE,
+  tuneGrid = XGB_tuneGrid_1,
+  verbose = FALSE)
+
+# Review the optimal hyper-parameters
+#XGB_cv_1$bestTune[1, ]
+
+#cat('Extreme Gradient Boosting #1:\nAcc: ', 
+#    round(mean(XGB_cv_1$pred$pred == XGB_cv_1$pred$obs), 5), ', logloss: ', 
+#    round(min(XGB_cv_1$results$logLoss), 5), '\n', sep = '')
+
+# SECOND - Refine the tuning grid for XGBoost
+XGB_tuneGrid_2 <- expand.grid(
+  nrounds = seq(from = 100, to = 1000, by = 50),  # Number of boosting rounds
+  max_depth = XGB_cv_1$bestTune$max_depth,        # Max depth of a tree
+  eta = XGB_cv_1$bestTune$eta,                    # Learning rate
+  gamma = 0,                                      # Min loss reduction required to make a further partition on a leaf node of the tree
+  colsample_bytree = 1,                           # Subsample ratio of columns when constructing each tree
+  min_child_weight = c(1, 2, 3),                  # Min sum of instance weight (hessian) needed in a child
+  subsample = 1)                                  # Subsample ratio of the training instance
+
+XGB_cv_2 <- train(
+  Cancel ~ ., 
+  data = train.over_hot,
+  method = 'xgbTree',
+  trControl = XGB_train.control,
+  metric = 'logLoss',
+  maximize = FALSE,
+  tuneGrid = XGB_tuneGrid_2,
+  verbose = FALSE)
+
+# Review the XGB CV 2 model summary
+#XGB_cv_2
+
+#cat('Extreme Gradient Boosting #2:\nAcc: ', 
+#    round(mean(XGB_cv_2$pred$pred == XGB_cv_2$pred$obs), 5), ', logloss: ', 
+#    round(min(XGB_cv_2$results$logLoss), 5), '\n', sep = '')
+
+# THIRD - Refine the tuning grid for XGBoost
+XGB_tuneGrid_3 <- expand.grid(
+  nrounds = seq(from = 100, to = 1000, by = 50),          # Number of boosting rounds
+  max_depth = XGB_cv_1$bestTune$max_depth,                # Max depth of a tree
+  eta = XGB_cv_1$bestTune$eta,                            # Learning rate
+  gamma = 0,                                              # Minloss reduction required to make a further partition on a leaf node of the tree
+  colsample_bytree = c(0.4, 0.6, 0.8, 1.0),               # Subsample ratio of columns when constructing each tree
+  min_child_weight = XGB_cv_2$bestTune$min_child_weight,  # Min sum of instance weight (hessian) needed in a child
+  subsample = c(0.5, 0.75, 1.0))                          # Subsample ratio of the training instance
+
+XGB_cv_3 <- train(
+  Cancel ~ ., 
+  data = train.over_hot,
+  method = 'xgbTree',
+  trControl = XGB_train.control,
+  metric = 'logLoss',
+  maximize = FALSE,
+  tuneGrid = XGB_tuneGrid_3,
+  verbose = FALSE)
+
+# Review the XGB CV 3 model summary
+#XGB_cv_3
+
+#cat('Extreme Gradient Boosting #3:\nAcc: ', 
+#    round(mean(XGB_cv_3$pred$pred == XGB_cv_3$pred$obs), 5), ', logloss: ', 
+#    round(min(XGB_cv_3$results$logLoss), 5), '\n', sep = '')
+
+# FOURTH - Refine the tuning grid for XGBoost
+XGB_tuneGrid_4 <- expand.grid(
+  nrounds = seq(from = 100, to = 1000, by = 50),          # Number of boosting rounds
+  max_depth = XGB_cv_1$bestTune$max_depth,                # Max depth of a tree
+  eta = XGB_cv_1$bestTune$eta,                            # Learning rate
+  gamma = c(0, 0.05, 0.1, 0.5, 0.7, 0.9, 1.0),            # Min loss reduction required to make a further partition on a leaf node of the tree
+  colsample_bytree = XGB_cv_3$bestTune$colsample_bytree,  # Subsample ratio of columns when constructing each tree
+  min_child_weight = XGB_cv_2$bestTune$min_child_weight,  # Min sum of instance weight (hessian) needed in a child
+  subsample = XGB_cv_3$bestTune$subsample)                # Subsample ratio of the training instance
+
+XGB_cv_4 <- train(
+  Cancel ~ ., 
+  data = train.over_hot,
+  method = 'xgbTree',
+  trControl = XGB_train.control,
+  metric = 'logLoss',
+  maximize = FALSE,
+  tuneGrid = XGB_tuneGrid_4,
+  verbose = FALSE)
+
+# Review the XGB CV 4 model summary
+#XGB_cv_4
+
+#cat('Extreme Gradient Boosting #4:\nAcc: ', 
+#    round(mean(XGB_cv_4$pred$pred == XGB_cv_4$pred$obs), 5), ', logloss: ', 
+#    round(min(XGB_cv_4$results$logLoss), 5), '\n', sep = '')
+
+# FIFTH - Refine the tuning grid for XGBoost
+XGB_tuneGrid_5 <- expand.grid(
+  nrounds = seq(from = 100, to = 1000, by = 50),          # Number of boosting rounds
+  max_depth = XGB_cv_1$bestTune$max_depth,                # Max depth of a tree
+  eta = c(0.01, 0.015, 0.025, 0.05, 0.1),                 # Learning rate
+  gamma = XGB_cv_4$bestTune$gamma,                        # Min loss reduction required to make a further partition on a leaf node of the tree
+  colsample_bytree = XGB_cv_3$bestTune$colsample_bytree,  # Subsample ratio of columns when constructing each tree
+  min_child_weight = XGB_cv_2$bestTune$min_child_weight,  # Min sum of instance weight (hessian) needed in a child
+  subsample = XGB_cv_3$bestTune$subsample)                # Subsample ratio of the training instance
+
+XGB_cv_5 <- train(
+  Cancel ~ ., 
+  data = train.over_hot,
+  method = 'xgbTree',
+  trControl = XGB_train.control,
+  metric = 'logLoss',
+  maximize = FALSE,
+  tuneGrid = XGB_tuneGrid_5,
+  verbose = FALSE)
+
+# Review the XGB CV 5 model summary
+#XGB_cv_5
+
+#cat('Extreme Gradient Boosting #5:\nAcc: ', 
+#    round(mean(XGB_cv_5$pred$pred == XGB_cv_5$pred$obs), 5), ', logloss: ', 
+#    round(min(XGB_cv_5$results$logLoss), 5), '\n', sep = '')
+
+# FINAL - Refine the tuning grid for XGBoost
+XGB_tuneGrid_final <- expand.grid(
+  nrounds = XGB_cv_5$bestTune$nrounds,                    # Number of boosting rounds
+  max_depth = XGB_cv_5$bestTune$max_depth,                # Max depth of a tree
+  eta = XGB_cv_5$bestTune$eta,                            # Learning rate
+  gamma = XGB_cv_5$bestTune$gamma,                        # Min loss reduction required to make a further partition on a leaf node of the tree
+  colsample_bytree = XGB_cv_5$bestTune$colsample_bytree,  # Subsample ratio of columns when constructing each tree
+  min_child_weight = XGB_cv_5$bestTune$min_child_weight,  # Min sum of instance weight (hessian) needed in a child
+  subsample = XGB_cv_5$bestTune$subsample)                # Subsample ratio of the training instance
+
+XGB_cv_final <- train(
+  Cancel ~ ., 
+  data = train.over_hot,
+  method = 'xgbTree',
+  trControl = XGB_train.control,
+  metric = 'logLoss',
+  maximize = FALSE,
+  tuneGrid = XGB_tuneGrid_final,
+  verbose = FALSE)
+
+# Review the final XGB model summary
+#XGB_cv_final
+
+#cat('Extreme Gradient Boosting - FINAL:\nAcc: ', 
+#    round(mean(XGB_cv_final$pred$pred == XGB_cv_final$pred$obs), 5), ', logloss: ', 
+#    round(min(XGB_cv_final$results$logLoss), 5), '\n', sep = '')
+
+# Retrieve significant features
+XGB_imp <- varImp(XGB_cv_final)$importance
+XGB_imp <- head(XGB_imp[order(XGB_imp$Overall, decreasing = TRUE), , drop = FALSE], 20)
+XGB_imp <- c(rownames(XGB_imp), 'Cancel')
+
+XGB_cv_final_r <- train(
+  Cancel ~ ., 
+  data = subset(train.over_hot, select = XGB_imp),
+  method = 'xgbTree',
+  trControl = XGB_train.control,
+  metric = 'logLoss',
+  maximize = FALSE,
+  tuneGrid = XGB_tuneGrid_final,
+  verbose = FALSE)
+
+# Review the XGB CV model summary
+#XGB_cv_final_r
+
+#cat('Gradient Boosting Machine with significant features:\nAcc: ', 
+#    round(mean(XGB_cv_final_r$pred$pred == XGB_cv_final_r$pred$obs), 5), ', logloss: ', 
+#    round(min(XGB_cv_final_r$results$logLoss), 5), '\n', sep = '')
+
+# Final XGB with significant features model VALIDATION
+XGB_final_r_val_prob <- predict(XGB_cv_final_r, 
+                        newdata = subset(val.norm_hot, select = XGB_imp),
+                        type = 'prob')
+XGB_final_r_val_pred <- predict(XGB_cv_final_r, 
+                        newdata = subset(val.norm_hot, select = XGB_imp),
+                        type = 'raw')
+
+XGB_final_r_cm <- confusionMatrix(XGB_final_r_val_pred, val.norm_hot$Cancel)
+#XGB_r_cm
+XGB_final_r_val_LogLoss <- MultiLogLoss(y_pred = XGB_final_r_val_prob, y_true = val.norm_hot$Cancel)
+XGB_final_r_val_Acc <- XGB_final_r_cm$overall[['Accuracy']]
+
+# Compile the validation results
+XGB_Models <- c('XGB #1',
+                'XGB #2',
+                'XGB #3', 
+                'XGB #4',
+                'XGB #5',
+                'XGB Final',
+                'XGB Final (sig)')
+XGB_cv_Acc <- c(round(mean(XGB_cv_1$pred$pred == XGB_cv_1$pred$obs), 5),
+                round(mean(XGB_cv_2$pred$pred == XGB_cv_2$pred$obs), 5), 
+                round(mean(XGB_cv_3$pred$pred == XGB_cv_3$pred$obs), 5), 
+                round(mean(XGB_cv_4$pred$pred == XGB_cv_4$pred$obs), 5),
+                round(mean(XGB_cv_5$pred$pred == XGB_cv_5$pred$obs), 5),
+                round(mean(XGB_cv_final$pred$pred == XGB_cv_final$pred$obs), 5),
+                round(mean(XGB_cv_final_r$pred$pred == XGB_cv_final_r$pred$obs), 5))
+XGB_cv_LogLoss <- c(round(min(XGB_cv_1$results$logLoss), 5), 
+                    round(min(XGB_cv_2$results$logLoss), 5), 
+                    round(min(XGB_cv_3$results$logLoss), 5),  
+                    round(min(XGB_cv_4$results$logLoss), 5),
+                    round(min(XGB_cv_5$results$logLoss), 5),
+                    round(min(XGB_cv_final$results$logLoss), 5),
+                    round(min(XGB_cv_final_r$results$logLoss), 5))
+
+all_XGB_results <- data.frame(XGB_Models, 
+                               XGB_cv_Acc, 
+                               XGB_cv_LogLoss)
+
+```
+
+```{r Model_Selection, include = FALSE}
+
+# Compile the validation results
+Models <- c('Logistic Regression (all)',
+            'Logistic Regression (sig)',
+            'Logistic Regression (sig+int)',
+            'Logistic Regression (PCA)',
+            'Elastic Net (all)',
+            'Elastic Net (sig)',
+            'Elastic Net (PCA)',
+            'Random Forest (all)',
+            'Random Forest (sig)',
+            'Gradient Boosting (all)', 
+            'Gradient Boosting (sig)',
+            'Extreme Gradient (all)',
+            "Extreme Gradient (sig)")
+CV_LogLoss <- c(round(glm.all$results$log.loss, 5),
+                 round(glm_r$results$log.loss, 5), 
+                 round(glm.int_r$results$log.loss, 5), 
+                 round(glm.pca$results$log.loss, 5), 
+                 round(min(ela_all$results$log.loss), 5), 
+                 round(min(ela_all_r$results$log.loss), 5), 
+                 round(min(ela_pca$results$log.loss), 5), 
+                 round(min(RF_cv$results$logLoss), 5), 
+                 round(min(RF_cv_r$results$logLoss), 5), 
+                 round(min(GBM_cv$results$logLoss), 5), 
+                 round(min(GBM_cv_r$results$logLoss), 5), 
+                 round(min(XGB_cv_final$results$logLoss), 5), 
+                 round(min(XGB_cv_final_r$results$logLoss), 5))
+CV_Acc <- c(round(glm.all$results$Accuracy, 5),
+             round(glm_r$results$Accuracy, 5), 
+             round(glm.int_r$results$Accuracy, 5),  
+             round(glm.pca$results$Accuracy, 5),
+             round(max(ela_all$results$Accuracy), 5),
+             round(mean(ela_all_r$pred$pred == ela_all_r$pred$obs), 5),
+             round(mean(ela_pca$pred$pred == ela_pca$pred$obs), 5),
+             round(mean(RF_cv$pred$pred == RF_cv$pred$obs), 5),
+             round(mean(RF_cv_r$pred$pred == RF_cv_r$pred$obs), 5),
+             round(mean(GBM_cv$pred$pred == GBM_cv$pred$obs), 5),
+             round(mean(GBM_cv_r$pred$pred == GBM_cv_r$pred$obs), 5),
+             round(mean(XGB_cv_final$pred$pred == XGB_cv_final$pred$obs), 5),
+             round(mean(XGB_cv_final_r$pred$pred == XGB_cv_final_r$pred$obs), 5))
+
+all_model_results <- data.frame(Models,
+                                 CV_Acc,
+                                 CV_LogLoss)
+
+```
+
+```{r Final_Model_Test, include = FALSE}
+
+# Final training set
+train_final <- cell.raw
+test_final_hot <- test.norm_hot
+
+# Convert to numeric safely
+train_final <- as.data.frame(lapply(train_final, function(x) {
+  if (all(is.na(as.numeric(as.character(x))))) {
+    return(x)  # Return original if conversion is not possible
+  } else {
+    return(as.numeric(as.character(x)))  # Convert to numeric
+  }
+}))
+
+set.seed(182)
+train_final$CustomerAge <- orderNorm(train_final$CustomerAge)$x.t # good
+train_final$HouseholdSize <- exp_x(train_final$HouseholdSize)$x.t # same
+train_final$LastNewPhone <- orderNorm(train_final$LastNewPhone)$x.t # good
+train_final$CustServCall <- sqrt_x(train_final$CustServCall)$x.t # ok
+train_final$NumVmail <- double_reverse_log(train_final$NumVmail)$x.t # same
+train_final$NumText <- center_scale(train_final$NumText)$x.t # ok
+train_final$NumApps <- orderNorm(train_final$NumApps)$x.t # ok
+train_final$IntlCall <- center_scale(train_final$IntlCall)$x.t # same
+train_final$DayData <- orderNorm(train_final$DayData)$x.t # good
+train_final$EveData <- orderNorm(train_final$EveData)$x.t # good
+train_final$NightData <- orderNorm(train_final$NightData)$x.t # good
+
+set.seed(182)
+dummy_tn <- dummyVars(" ~ .", data = train_final[-29])
+train_final_hot <- data.frame(predict(dummy_tn, newdata = train_final[-29]))
+train_final_hot <- cbind(train_final_hot, Cancel = train_final$Cancel)
+
+# Check the class distribution before resampling
+table(train_final_hot$Cancel)
+
+# Resample using the "over" method
+set.seed(182)
+train_final_hot_over <- ovun.sample(Cancel~., 
+                               data = train_final_hot,
+                               #N = nrow(train), 
+                               p = 0.5, 
+                               seed = 1, 
+                               method = "over")$data
+
+# Check the class distribution after resampling
+final_model_train_cancel_tbl <- table(train_final_hot_over$Cancel)
+
+set.seed(182)
+
+XGB_winner <- train(
+  Cancel ~ ., 
+  data = subset(train_final_hot_over, select = XGB_imp),
+  method = 'xgbTree',
+  trControl = XGB_train.control,
+  metric = 'logLoss',
+  maximize = FALSE,
+  tuneGrid = XGB_tuneGrid_final,
+  verbose = FALSE)
+
+# Review the elastic net model summary
+#XGB_winner
+
+#cat('Final Extreme Gradient Boosting Performance:\nAcc: ', 
+#    round(mean(XGB_winner$pred$pred == XGB_winner$pred$obs), 5), ', logloss: ', 
+#    round(min(XGB_winner$results$logLoss), 5), '\n', sep = '')
+
+# Predict on the transformed test data
+result_label <- predict(XGB_winner, newdata = test_final_hot)
+result_prob <- predict(XGB_winner, newdata = test_final_hot, type = 'prob')[2]
+colnames(result_prob) <- 'Probability'
+#result_prob
+# Evaluate the predictions
+results_final <- data.frame(Probability = result_prob, Label = result_label)
+
+```
+
+### Exploratory Data Analysis and Preparation
+The data was reviewed for class, NaNs, correlation, significance, distribution, and balance. I performed feature transformations, one-hot encoding, resampling, and feature reduction (manual and PCA).
+
+```{r, echo = FALSE, fig.width = 5, fig.height = 3}
+cor_cross_plot
+```
+
+In cross-correlation analysis, I identified multicollinearity (`DayMin`, `EveMin`, `EveCharge`, `IntlMin`) and categorical features of > .05 p-value relative to `Cancel` (`Married`, `PaymentMethod`). I considered these features for removal in during modeling.
+
+To address non-normal & uniform distributions, the `bestNormalization()` function to apply the best transformations (Ordered Quantile, Square Root, and exponential, logarithmic) on training, validation & test features for optimal predictive power.
+
+I over-sampled the data based on the target variable `Cancel` from `No:554, Yes:255` to `No:554, Yes:533`. I one-hot encoded categorical features, excluding `Cancel`. PCA analysis was evaluated for feature reduction and model simplicity. The 1st component captured little variance in the data (0.1075), resulting in much information lost.
+
+```{r, echo = FALSE}
+kable(StatSum(train.over_hot)[-7:-11][-8], 
+      booktabs = TRUE, 
+      caption = 'Normalized One-Hot Encoded Training Data Stats') %>%
+  kable_styling(font_size = 5, latex_options = "HOLD_position")
+```
+
+### Model Competition
+10 models were built using `caret` with cross-validation (CV), of 5 folds and 3 repetitions, a control parameter and tuning grid, optimized by minimizing LogLoss and evaluating for accuracy. Training was done on normalized, one-hot, resampled data, with feature reduction throughout.
+
+#### Logistic Regression (all terms, significant terms, interactions, PCA)
+CV was used on all 4 GLM models. The PCA model was the weakest, while the model with interaction terms and feature reduction model was the strongest, even outperforming Elastic Net.
+
+#### Elastic Net (all terms, PCA)
+CV was used to find the optimal lambda & alpha coefficients. The PCA model was the weakest, while the all-terms model was the strongest.
+
+#### Random Forest (RF) and Gradient Boosting Machine (GBM)
+For RF, CV was used to find the optimal random feature sampling at each split. For GBM, CV was used to find the optimal number of trees, depth, shrinkage, and nodes. RF outperformed GBM, ElasticNet, and GLM. However, RF took the longest time to train.
+
+#### Extreme Gradient Boosting (XGB)
+5 iterative tuning grids with CV were applied to heuristically comb for 7 optimal hyper-parameters (6480 combinations). Each iteration gradually converged on the following: nrounds 250, depth 5, eta 0.05, gamma 0, subsampling 1, min child 1, colsample 0.6. XGB with feature reduction attained the top accuracy and LogLoss. XGB is the least explainable, requiring ~65 min to train.
+
+```{r, echo = FALSE}
+# Create the Model Competition Metrics table
+kable(all_model_results, 
+      booktabs = TRUE, 
+      caption = 'Model Competition Metrics') %>%
+  kable_styling(font_size = 5, latex_options = "HOLD_position")
+```
+### Final Model Selection
+The final XGB model with feature reduction was selected with a CV accuracy > 94% and LogLoss < .14. Validation metrics were ~89% accuracy and ~0.27 LogLoss.
+ 
+```{r, echo = FALSE}
+kable(head(results_final), 
+      booktabs = TRUE, 
+      caption = 'Predicted Cancellations') %>%
+  kable_styling(font_size = 5, latex_options = "HOLD_position")
+```
