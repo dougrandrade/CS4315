@@ -3,10 +3,9 @@
 ### This repository contains a collection of course projects in Python and R, and their associated databases and output files.
 
 - CS 4315 Introduction to Machine Learning
-	- Data Science Salary Analysis and Prediction Using KNN Regression (Python with Jupyter Notebook)
+	- Data Science Salary Analysis and Prediction Using KNN Regression (Jupyter Notebook)
 - CS 4106 Advanced Data Analysis
-	- Stucco Strength Analysis and Prediction (RStudio with RMarkdown)
-	- Cell Phone Plan Cancellations Analysis and Prediction (RStudtio with RMarkdown)
+	- Cell Phone Plan Cancellations Analysis and Prediction (RMarkdown pdf)
 
 
 -------------------------------------------------------------------------------
